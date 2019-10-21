@@ -104,18 +104,33 @@ TEXT runtime·read(SB),NOSPLIT,$-8
 	MOVL	$3, AX
 	SYSCALL
 	JCC	2(PC)
-	MOVL	$-1, AX
+	NEGL	AX			// caller expects negative errno
 	MOVL	AX, ret+24(FP)
 	RET
 
-TEXT runtime·write(SB),NOSPLIT,$-8
+// func pipe() (r, w int32, errno int32)
+TEXT runtime·pipe(SB),NOSPLIT,$0-12
+	MOVL	$42, AX
+	SYSCALL
+	JCC	pipeok
+	MOVL	$-1,r+0(FP)
+	MOVL	$-1,w+4(FP)
+	MOVL	AX, errno+8(FP)
+	RET
+pipeok:
+	MOVL	AX, r+0(FP)
+	MOVL	DX, w+4(FP)
+	MOVL	$0, errno+8(FP)
+	RET
+
+TEXT runtime·write1(SB),NOSPLIT,$-8
 	MOVQ	fd+0(FP), DI		// arg 1 fd
 	MOVQ	p+8(FP), SI		// arg 2 buf
 	MOVL	n+16(FP), DX		// arg 3 count
 	MOVL	$4, AX
 	SYSCALL
 	JCC	2(PC)
-	MOVL	$-1, AX
+	NEGL	AX			// caller expects negative errno
 	MOVL	AX, ret+24(FP)
 	RET
 
@@ -146,8 +161,8 @@ TEXT runtime·setitimer(SB), NOSPLIT, $-8
 	SYSCALL
 	RET
 
-// func walltime() (sec int64, nsec int32)
-TEXT runtime·walltime(SB), NOSPLIT, $32
+// func walltime1() (sec int64, nsec int32)
+TEXT runtime·walltime1(SB), NOSPLIT, $32
 	MOVL	$232, AX // clock_gettime
 	MOVQ	$0, DI  	// CLOCK_REALTIME
 	LEAQ	8(SP), SI
@@ -160,7 +175,7 @@ TEXT runtime·walltime(SB), NOSPLIT, $32
 	MOVL	DX, nsec+8(FP)
 	RET
 
-TEXT runtime·nanotime(SB), NOSPLIT, $32
+TEXT runtime·nanotime1(SB), NOSPLIT, $32
 	MOVL	$232, AX
 	MOVQ	$4, DI  	// CLOCK_MONOTONIC
 	LEAQ	8(SP), SI
@@ -369,5 +384,20 @@ TEXT runtime·closeonexec(SB),NOSPLIT,$0
 	MOVQ	$2, SI		// F_SETFD
 	MOVQ	$1, DX		// FD_CLOEXEC
 	MOVL	$92, AX		// fcntl
+	SYSCALL
+	RET
+
+// func runtime·setNonblock(int32 fd)
+TEXT runtime·setNonblock(SB),NOSPLIT,$0-4
+	MOVL    fd+0(FP), DI  // fd
+	MOVQ    $3, SI  // F_GETFL
+	MOVQ    $0, DX
+	MOVL	$92, AX // fcntl
+	SYSCALL
+	MOVL	fd+0(FP), DI // fd
+	MOVQ	$4, SI // F_SETFL
+	MOVQ	$4, DX // O_NONBLOCK
+	ORL	AX, DX
+	MOVL	$92, AX // fcntl
 	SYSCALL
 	RET

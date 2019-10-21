@@ -105,7 +105,6 @@ func Global() Value {
 //  | Go                     | JavaScript             |
 //  | ---------------------- | ---------------------- |
 //  | js.Value               | [its value]            |
-//  | js.TypedArray          | typed array            |
 //  | js.Func                | function               |
 //  | nil                    | null                   |
 //  | bool                   | boolean                |
@@ -267,6 +266,17 @@ func (v Value) Set(p string, x interface{}) {
 }
 
 func valueSet(v ref, p string, x ref)
+
+// Delete deletes the JavaScript property p of value v.
+// It panics if v is not a JavaScript object.
+func (v Value) Delete(p string) {
+	if vType := v.Type(); !vType.isObject() {
+		panic(&ValueError{"Value.Delete", vType})
+	}
+	valueDelete(v.ref, p)
+}
+
+func valueDelete(v ref, p string)
 
 // Index returns JavaScript index i of value v.
 // It panics if v is not a JavaScript object.

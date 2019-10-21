@@ -18,7 +18,6 @@ import (
 	"os"
 	"reflect"
 	"strings"
-	"sync"
 	"testing"
 	"time"
 )
@@ -356,50 +355,6 @@ func TestVerifyHostname(t *testing.T) {
 	}
 	if err := c.VerifyHostname("www.google.com"); err == nil {
 		t.Fatalf("verify www.google.com succeeded with InsecureSkipVerify=true")
-	}
-}
-
-func TestVerifyHostnameResumed(t *testing.T) {
-	t.Run("TLSv12", func(t *testing.T) { testVerifyHostnameResumed(t, VersionTLS12) })
-	t.Run("TLSv13", func(t *testing.T) { testVerifyHostnameResumed(t, VersionTLS13) })
-}
-
-func testVerifyHostnameResumed(t *testing.T, version uint16) {
-	testenv.MustHaveExternalNetwork(t)
-
-	config := &Config{
-		MaxVersion:         version,
-		ClientSessionCache: NewLRUClientSessionCache(32),
-	}
-	for i := 0; i < 2; i++ {
-		c, err := DialWithDialer(&net.Dialer{
-			Timeout: 10 * time.Second,
-		}, "tcp", "mail.google.com:https", config)
-		if err != nil {
-			t.Fatalf("Dial #%d: %v", i, err)
-		}
-		cs := c.ConnectionState()
-		if i > 0 && !cs.DidResume {
-			t.Fatalf("Subsequent connection unexpectedly didn't resume")
-		}
-		if cs.Version != version {
-			t.Fatalf("Unexpectedly negotiated version %x", cs.Version)
-		}
-		if cs.VerifiedChains == nil {
-			t.Fatalf("Dial #%d: cs.VerifiedChains == nil", i)
-		}
-		if err := c.VerifyHostname("mail.google.com"); err != nil {
-			t.Fatalf("verify mail.google.com #%d: %v", i, err)
-		}
-		// Have the server send some data so session tickets are delivered.
-		c.SetDeadline(time.Now().Add(5 * time.Second))
-		if _, err := io.WriteString(c, "HEAD / HTTP/1.0\n\n"); err != nil {
-			t.Fatal(err)
-		}
-		if _, err := c.Read(make([]byte, 1)); err != nil {
-			t.Fatal(err)
-		}
-		c.Close()
 	}
 }
 
@@ -1065,60 +1020,6 @@ func TestConnectionState(t *testing.T) {
 			}
 		})
 	}
-}
-
-// TestEscapeRoute tests that the library will still work if support for TLS 1.3
-// is dropped later in the Go 1.12 cycle.
-func TestEscapeRoute(t *testing.T) {
-	defer func(savedSupportedVersions []uint16) {
-		supportedVersions = savedSupportedVersions
-	}(supportedVersions)
-	supportedVersions = []uint16{
-		VersionTLS12,
-		VersionTLS11,
-		VersionTLS10,
-		VersionSSL30,
-	}
-
-	expectVersion(t, testConfig, testConfig, VersionTLS12)
-}
-
-func expectVersion(t *testing.T, clientConfig, serverConfig *Config, v uint16) {
-	ss, cs, err := testHandshake(t, clientConfig, serverConfig)
-	if err != nil {
-		t.Fatalf("Handshake failed: %v", err)
-	}
-	if ss.Version != v {
-		t.Errorf("Server negotiated version %x, expected %x", cs.Version, v)
-	}
-	if cs.Version != v {
-		t.Errorf("Client negotiated version %x, expected %x", cs.Version, v)
-	}
-}
-
-// TestTLS13Switch checks the behavior of GODEBUG=tls13=[0|1]. See Issue 30055.
-func TestTLS13Switch(t *testing.T) {
-	defer func(savedGODEBUG string) {
-		os.Setenv("GODEBUG", savedGODEBUG)
-	}(os.Getenv("GODEBUG"))
-
-	os.Setenv("GODEBUG", "tls13=0")
-	tls13Support.Once = sync.Once{} // reset the cache
-
-	tls12Config := testConfig.Clone()
-	tls12Config.MaxVersion = VersionTLS12
-	expectVersion(t, testConfig, testConfig, VersionTLS12)
-	expectVersion(t, tls12Config, testConfig, VersionTLS12)
-	expectVersion(t, testConfig, tls12Config, VersionTLS12)
-	expectVersion(t, tls12Config, tls12Config, VersionTLS12)
-
-	os.Setenv("GODEBUG", "tls13=1")
-	tls13Support.Once = sync.Once{} // reset the cache
-
-	expectVersion(t, testConfig, testConfig, VersionTLS13)
-	expectVersion(t, tls12Config, testConfig, VersionTLS12)
-	expectVersion(t, testConfig, tls12Config, VersionTLS12)
-	expectVersion(t, tls12Config, tls12Config, VersionTLS12)
 }
 
 // Issue 28744: Ensure that we don't modify memory

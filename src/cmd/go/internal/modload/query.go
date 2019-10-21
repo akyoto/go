@@ -12,6 +12,7 @@ import (
 	"strings"
 	"sync"
 
+	"cmd/go/internal/imports"
 	"cmd/go/internal/modfetch"
 	"cmd/go/internal/module"
 	"cmd/go/internal/search"
@@ -23,31 +24,47 @@ import (
 // The module must be a complete module path.
 // The version must take one of the following forms:
 //
-//	- the literal string "latest", denoting the latest available, allowed tagged version,
-//	  with non-prereleases preferred over prereleases.
-//	  If there are no tagged versions in the repo, latest returns the most recent commit.
-//	- v1, denoting the latest available tagged version v1.x.x.
-//	- v1.2, denoting the latest available tagged version v1.2.x.
-//	- v1.2.3, a semantic version string denoting that tagged version.
-//	- <v1.2.3, <=v1.2.3, >v1.2.3, >=v1.2.3,
-//	   denoting the version closest to the target and satisfying the given operator,
-//	   with non-prereleases preferred over prereleases.
-//	- a repository commit identifier or tag, denoting that commit.
+// - the literal string "latest", denoting the latest available, allowed
+//   tagged version, with non-prereleases preferred over prereleases.
+//   If there are no tagged versions in the repo, latest returns the most
+//   recent commit.
+// - the literal string "upgrade", equivalent to "latest" except that if
+//   current is a newer version, current will be returned (see below).
+// - the literal string "patch", denoting the latest available tagged version
+//   with the same major and minor number as current (see below).
+// - v1, denoting the latest available tagged version v1.x.x.
+// - v1.2, denoting the latest available tagged version v1.2.x.
+// - v1.2.3, a semantic version string denoting that tagged version.
+// - <v1.2.3, <=v1.2.3, >v1.2.3, >=v1.2.3,
+//   denoting the version closest to the target and satisfying the given operator,
+//   with non-prereleases preferred over prereleases.
+// - a repository commit identifier or tag, denoting that commit.
 //
-// If the allowed function is non-nil, Query excludes any versions for which allowed returns false.
+// current denotes the current version of the module; it may be "" if the
+// current version is unknown or should not be considered. If query is
+// "upgrade" or "patch", current will be returned if it is a newer
+// semantic version or a chronologically later pseudo-version than the
+// version that would otherwise be chosen. This prevents accidental downgrades
+// from newer pre-release or development versions.
+//
+// If the allowed function is non-nil, Query excludes any versions for which
+// allowed returns false.
 //
 // If path is the path of the main module and the query is "latest",
 // Query returns Target.Version as the version.
-func Query(path, query string, allowed func(module.Version) bool) (*modfetch.RevInfo, error) {
+func Query(path, query, current string, allowed func(module.Version) bool) (*modfetch.RevInfo, error) {
 	var info *modfetch.RevInfo
 	err := modfetch.TryProxies(func(proxy string) (err error) {
-		info, err = queryProxy(proxy, path, query, allowed)
+		info, err = queryProxy(proxy, path, query, current, allowed)
 		return err
 	})
 	return info, err
 }
 
-func queryProxy(proxy, path, query string, allowed func(module.Version) bool) (*modfetch.RevInfo, error) {
+func queryProxy(proxy, path, query, current string, allowed func(module.Version) bool) (*modfetch.RevInfo, error) {
+	if current != "" && !semver.IsValid(current) {
+		return nil, fmt.Errorf("invalid previous version %q", current)
+	}
 	if allowed == nil {
 		allowed = func(module.Version) bool { return true }
 	}
@@ -60,9 +77,26 @@ func queryProxy(proxy, path, query string, allowed func(module.Version) bool) (*
 	var ok func(module.Version) bool
 	var prefix string
 	var preferOlder bool
+	var mayUseLatest bool
 	switch {
 	case query == "latest":
 		ok = allowed
+		mayUseLatest = true
+
+	case query == "upgrade":
+		ok = allowed
+		mayUseLatest = true
+
+	case query == "patch":
+		if current == "" {
+			ok = allowed
+			mayUseLatest = true
+		} else {
+			prefix = semver.MajorMinor(current)
+			ok = func(m module.Version) bool {
+				return matchSemverPrefix(prefix, m.Version) && allowed(m)
+			}
+		}
 
 	case strings.HasPrefix(query, "<="):
 		v := query[len("<="):]
@@ -130,6 +164,9 @@ func queryProxy(proxy, path, query string, allowed func(module.Version) bool) (*
 			// semantic versioning defines them to be equivalent.
 			if vers := module.CanonicalVersion(query); vers != "" && vers != query {
 				info, err = modfetch.Stat(proxy, path, vers)
+				if !errors.Is(err, os.ErrNotExist) {
+					return info, err
+				}
 			}
 			if err != nil {
 				return nil, queryErr
@@ -165,41 +202,64 @@ func queryProxy(proxy, path, query string, allowed func(module.Version) bool) (*
 		return nil, err
 	}
 
+	lookup := func(v string) (*modfetch.RevInfo, error) {
+		rev, err := repo.Stat(v)
+		if err != nil {
+			return nil, err
+		}
+
+		// For "upgrade" and "patch", make sure we don't accidentally downgrade
+		// from a newer prerelease or from a chronologically newer pseudoversion.
+		if current != "" && (query == "upgrade" || query == "patch") {
+			currentTime, err := modfetch.PseudoVersionTime(current)
+			if semver.Compare(rev.Version, current) < 0 || (err == nil && rev.Time.Before(currentTime)) {
+				return repo.Stat(current)
+			}
+		}
+
+		return rev, nil
+	}
+
 	if preferOlder {
 		for _, v := range versions {
 			if semver.Prerelease(v) == "" && ok(module.Version{Path: path, Version: v}) {
-				return repo.Stat(v)
+				return lookup(v)
 			}
 		}
 		for _, v := range versions {
 			if semver.Prerelease(v) != "" && ok(module.Version{Path: path, Version: v}) {
-				return repo.Stat(v)
+				return lookup(v)
 			}
 		}
 	} else {
 		for i := len(versions) - 1; i >= 0; i-- {
 			v := versions[i]
 			if semver.Prerelease(v) == "" && ok(module.Version{Path: path, Version: v}) {
-				return repo.Stat(v)
+				return lookup(v)
 			}
 		}
 		for i := len(versions) - 1; i >= 0; i-- {
 			v := versions[i]
 			if semver.Prerelease(v) != "" && ok(module.Version{Path: path, Version: v}) {
-				return repo.Stat(v)
+				return lookup(v)
 			}
 		}
 	}
 
-	if query == "latest" {
+	if mayUseLatest {
 		// Special case for "latest": if no tags match, use latest commit in repo,
 		// provided it is not excluded.
-		if info, err := repo.Latest(); err == nil && allowed(module.Version{Path: path, Version: info.Version}) {
-			return info, nil
+		latest, err := repo.Latest()
+		if err == nil {
+			if allowed(module.Version{Path: path, Version: latest.Version}) {
+				return lookup(latest.Version)
+			}
+		} else if !errors.Is(err, os.ErrNotExist) {
+			return nil, err
 		}
 	}
 
-	return nil, &NoMatchingVersionError{query: query}
+	return nil, &NoMatchingVersionError{query: query, current: current}
 }
 
 // isSemverPrefix reports whether v is a semantic version prefix: v1 or v1.2 (not v1.2.3).
@@ -265,7 +325,7 @@ func QueryPattern(pattern, query string, allowed func(module.Version) bool) ([]Q
 	if i := strings.Index(pattern, "..."); i >= 0 {
 		base = pathpkg.Dir(pattern[:i+3])
 		match = func(m module.Version, root string, isLocal bool) []string {
-			return matchPackages(pattern, anyTags, false, []module.Version{m})
+			return matchPackages(pattern, imports.AnyTags(), false, []module.Version{m})
 		}
 	} else {
 		match = func(m module.Version, root string, isLocal bool) []string {
@@ -309,7 +369,7 @@ func QueryPattern(pattern, query string, allowed func(module.Version) bool) ([]Q
 	err := modfetch.TryProxies(func(proxy string) error {
 		queryModule := func(path string) (r QueryResult, err error) {
 			r.Mod.Path = path
-			r.Rev, err = queryProxy(proxy, path, query, allowed)
+			r.Rev, err = queryProxy(proxy, path, query, "", allowed)
 			if err != nil {
 				return r, err
 			}
@@ -320,10 +380,11 @@ func QueryPattern(pattern, query string, allowed func(module.Version) bool) ([]Q
 			}
 			r.Packages = match(r.Mod, root, isLocal)
 			if len(r.Packages) == 0 {
-				return r, &packageNotInModuleError{
-					mod:     r.Mod,
-					query:   query,
-					pattern: pattern,
+				return r, &PackageNotInModuleError{
+					Mod:         r.Mod,
+					Replacement: Replacement(r.Mod),
+					Query:       query,
+					Pattern:     pattern,
 				}
 			}
 			return r, nil
@@ -386,31 +447,42 @@ func queryPrefixModules(candidateModules []string, queryModule func(path string)
 	wg.Wait()
 
 	// Classify the results. In case of failure, identify the error that the user
-	// is most likely to find helpful.
+	// is most likely to find helpful: the most useful class of error at the
+	// longest matching path.
 	var (
+		noPackage   *PackageNotInModuleError
 		noVersion   *NoMatchingVersionError
-		noPackage   *packageNotInModuleError
 		notExistErr error
 	)
 	for _, r := range results {
 		switch rErr := r.err.(type) {
 		case nil:
 			found = append(found, r.QueryResult)
+		case *PackageNotInModuleError:
+			if noPackage == nil {
+				noPackage = rErr
+			}
 		case *NoMatchingVersionError:
 			if noVersion == nil {
 				noVersion = rErr
-			}
-		case *packageNotInModuleError:
-			if noPackage == nil {
-				noPackage = rErr
 			}
 		default:
 			if errors.Is(rErr, os.ErrNotExist) {
 				if notExistErr == nil {
 					notExistErr = rErr
 				}
-			} else {
-				err = r.err
+			} else if err == nil {
+				if len(found) > 0 || noPackage != nil {
+					// golang.org/issue/34094: If we have already found a module that
+					// could potentially contain the target package, ignore unclassified
+					// errors for modules with shorter paths.
+
+					// golang.org/issue/34383 is a special case of this: if we have
+					// already found example.com/foo/v2@v2.0.0 with a matching go.mod
+					// file, ignore the error from example.com/foo@v2.0.0.
+				} else {
+					err = r.err
+				}
 			}
 		}
 	}
@@ -444,38 +516,53 @@ func queryPrefixModules(candidateModules []string, queryModule func(path string)
 // code for the versions it knows about, and thus did not have the opportunity
 // to return a non-400 status code to suppress fallback.
 type NoMatchingVersionError struct {
-	query string
+	query, current string
 }
 
 func (e *NoMatchingVersionError) Error() string {
-	return fmt.Sprintf("no matching versions for query %q", e.query)
+	currentSuffix := ""
+	if (e.query == "upgrade" || e.query == "patch") && e.current != "" {
+		currentSuffix = fmt.Sprintf(" (current version is %s)", e.current)
+	}
+	return fmt.Sprintf("no matching versions for query %q", e.query) + currentSuffix
 }
 
-// A packageNotInModuleError indicates that QueryPattern found a candidate
+// A PackageNotInModuleError indicates that QueryPattern found a candidate
 // module at the requested version, but that module did not contain any packages
 // matching the requested pattern.
 //
-// NOTE: packageNotInModuleError MUST NOT implement Is(os.ErrNotExist).
+// NOTE: PackageNotInModuleError MUST NOT implement Is(os.ErrNotExist).
 //
 // If the module came from a proxy, that proxy had to return a successful status
 // code for the versions it knows about, and thus did not have the opportunity
 // to return a non-400 status code to suppress fallback.
-type packageNotInModuleError struct {
-	mod     module.Version
-	query   string
-	pattern string
+type PackageNotInModuleError struct {
+	Mod         module.Version
+	Replacement module.Version
+	Query       string
+	Pattern     string
 }
 
-func (e *packageNotInModuleError) Error() string {
+func (e *PackageNotInModuleError) Error() string {
 	found := ""
-	if e.query != e.mod.Version {
-		found = fmt.Sprintf(" (%s)", e.mod.Version)
+	if r := e.Replacement; r.Path != "" {
+		replacement := r.Path
+		if r.Version != "" {
+			replacement = fmt.Sprintf("%s@%s", r.Path, r.Version)
+		}
+		if e.Query == e.Mod.Version {
+			found = fmt.Sprintf(" (replaced by %s)", replacement)
+		} else {
+			found = fmt.Sprintf(" (%s, replaced by %s)", e.Mod.Version, replacement)
+		}
+	} else if e.Query != e.Mod.Version {
+		found = fmt.Sprintf(" (%s)", e.Mod.Version)
 	}
 
-	if strings.Contains(e.pattern, "...") {
-		return fmt.Sprintf("module %s@%s%s found, but does not contain packages matching %s", e.mod.Path, e.query, found, e.pattern)
+	if strings.Contains(e.Pattern, "...") {
+		return fmt.Sprintf("module %s@%s found%s, but does not contain packages matching %s", e.Mod.Path, e.Query, found, e.Pattern)
 	}
-	return fmt.Sprintf("module %s@%s%s found, but does not contain package %s", e.mod.Path, e.query, found, e.pattern)
+	return fmt.Sprintf("module %s@%s found%s, but does not contain package %s", e.Mod.Path, e.Query, found, e.Pattern)
 }
 
 // ModuleHasRootPackage returns whether module m contains a package m.Path.

@@ -240,9 +240,9 @@ func lookup(proxy, path string) (r Repo, err error) {
 
 var (
 	errModVendor       = errors.New("module lookup disabled by -mod=vendor")
-	errProxyOff        = errors.New("module lookup disabled by GOPROXY=off")
-	errNoproxy   error = notExistError("disabled by GONOPROXY")
-	errUseProxy  error = notExistError("path does not match GONOPROXY")
+	errProxyOff        = notExistError("module lookup disabled by GOPROXY=off")
+	errNoproxy   error = notExistError("disabled by GOPRIVATE/GONOPROXY")
+	errUseProxy  error = notExistError("path does not match GOPRIVATE/GONOPROXY")
 )
 
 func lookupDirect(path string) (Repo, error) {
@@ -319,7 +319,7 @@ func ImportRepoRev(path, rev string) (Repo, *RevInfo, error) {
 		return nil, nil, err
 	}
 
-	info, err := repo.(*codeRepo).convert(revInfo, "")
+	info, err := repo.(*codeRepo).convert(revInfo, rev)
 	if err != nil {
 		return nil, nil, err
 	}

@@ -50,7 +50,18 @@ func ipv6LinkLocalUnicastAddr(ifi *Interface) string {
 	return ""
 }
 
+func condSkipInterfaceTest(t *testing.T) {
+	t.Helper()
+	switch runtime.GOOS {
+	case "darwin":
+		if runtime.GOARCH == "arm" || runtime.GOARCH == "arm64" {
+			t.Skipf("sysctl is not supported on iOS")
+		}
+	}
+}
+
 func TestInterfaces(t *testing.T) {
+	condSkipInterfaceTest(t)
 	ift, err := Interfaces()
 	if err != nil {
 		t.Fatal(err)
@@ -82,6 +93,7 @@ func TestInterfaces(t *testing.T) {
 }
 
 func TestInterfaceAddrs(t *testing.T) {
+	condSkipInterfaceTest(t)
 	ift, err := Interfaces()
 	if err != nil {
 		t.Fatal(err)
@@ -101,6 +113,7 @@ func TestInterfaceAddrs(t *testing.T) {
 }
 
 func TestInterfaceUnicastAddrs(t *testing.T) {
+	condSkipInterfaceTest(t)
 	ift, err := Interfaces()
 	if err != nil {
 		t.Fatal(err)
@@ -128,6 +141,7 @@ func TestInterfaceUnicastAddrs(t *testing.T) {
 }
 
 func TestInterfaceMulticastAddrs(t *testing.T) {
+	condSkipInterfaceTest(t)
 	ift, err := Interfaces()
 	if err != nil {
 		t.Fatal(err)
@@ -278,7 +292,7 @@ func checkUnicastStats(ifStats *ifStats, uniStats *routeStats) error {
 
 func checkMulticastStats(ifStats *ifStats, uniStats, multiStats *routeStats) error {
 	switch runtime.GOOS {
-	case "aix", "dragonfly", "nacl", "netbsd", "openbsd", "plan9", "solaris", "illumos":
+	case "aix", "dragonfly", "netbsd", "openbsd", "plan9", "solaris", "illumos":
 	default:
 		// Test the existence of connected multicast route
 		// clones for IPv4. Unlike IPv6, IPv4 multicast

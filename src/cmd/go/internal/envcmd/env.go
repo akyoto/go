@@ -79,6 +79,7 @@ func MkEnv() []cfg.EnvVar {
 		{Name: "GONOSUMDB", Value: cfg.GONOSUMDB},
 		{Name: "GOOS", Value: cfg.Goos},
 		{Name: "GOPATH", Value: cfg.BuildContext.GOPATH},
+		{Name: "GOPRIVATE", Value: cfg.GOPRIVATE},
 		{Name: "GOPROXY", Value: cfg.GOPROXY},
 		{Name: "GOROOT", Value: cfg.GOROOT},
 		{Name: "GOSUMDB", Value: cfg.GOSUMDB},
@@ -340,6 +341,18 @@ func checkEnvWrite(key, val string, env []cfg.EnvVar) error {
 	// To catch typos and the like, check that we know the variable.
 	if !cfg.CanGetenv(key) {
 		return fmt.Errorf("unknown go command variable %s", key)
+	}
+
+	// Some variables can only have one of a few valid values. If set to an
+	// invalid value, the next cmd/go invocation might fail immediately,
+	// even 'go env -w' itself.
+	switch key {
+	case "GO111MODULE":
+		switch val {
+		case "", "auto", "on", "off":
+		default:
+			return fmt.Errorf("invalid %s value %q", key, val)
+		}
 	}
 
 	if !utf8.ValidString(val) {

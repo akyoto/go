@@ -304,7 +304,7 @@ func (lv *Liveness) valueEffects(v *ssa.Value) (int32, liveEffect) {
 	var effect liveEffect
 	// Read is a read, obviously.
 	//
-	// Addr is a read also, as any subseqent holder of the pointer must be able
+	// Addr is a read also, as any subsequent holder of the pointer must be able
 	// to see all the values (including initialization) written so far.
 	// This also prevents a variable from "coming back from the dead" and presenting
 	// stale pointers to the garbage collector. See issue 28445.
@@ -670,7 +670,7 @@ func (lv *Liveness) markUnsafePoints() {
 		// single op that does the memory load from the flag
 		// address, so we look for that.
 		var load *ssa.Value
-		v := wbBlock.Control
+		v := wbBlock.Controls[0]
 		for {
 			if sym, ok := v.Aux.(*obj.LSym); ok && sym == writeBarrier {
 				load = v
@@ -908,7 +908,7 @@ func (lv *Liveness) epilogue() {
 	if lv.fn.Func.HasDefer() {
 		for i, n := range lv.vars {
 			if n.Class() == PPARAMOUT {
-				if n.IsOutputParamHeapAddr() {
+				if n.Name.IsOutputParamHeapAddr() {
 					// Just to be paranoid.  Heap addresses are PAUTOs.
 					Fatalf("variable %v both output param and heap output param", n)
 				}
@@ -920,7 +920,7 @@ func (lv *Liveness) epilogue() {
 				// Note: zeroing is handled by zeroResults in walk.go.
 				livedefer.Set(int32(i))
 			}
-			if n.IsOutputParamHeapAddr() {
+			if n.Name.IsOutputParamHeapAddr() {
 				// This variable will be overwritten early in the function
 				// prologue (from the result of a mallocgc) but we need to
 				// zero it in case that malloc causes a stack scan.
@@ -1448,4 +1448,41 @@ func liveness(e *ssafn, f *ssa.Func, pp *Progs) LivenessMap {
 	p.To.Sym = ls.Func.GCRegs
 
 	return lv.livenessMap
+}
+
+// isfat reports whether a variable of type t needs multiple assignments to initialize.
+// For example:
+//
+// 	type T struct { x, y int }
+// 	x := T{x: 0, y: 1}
+//
+// Then we need:
+//
+// 	var t T
+// 	t.x = 0
+// 	t.y = 1
+//
+// to fully initialize t.
+func isfat(t *types.Type) bool {
+	if t != nil {
+		switch t.Etype {
+		case TSLICE, TSTRING,
+			TINTER: // maybe remove later
+			return true
+		case TARRAY:
+			// Array of 1 element, check if element is fat
+			if t.NumElem() == 1 {
+				return isfat(t.Elem())
+			}
+			return true
+		case TSTRUCT:
+			// Struct with 1 field, check if field is fat
+			if t.NumFields() == 1 {
+				return isfat(t.Field(0).Type)
+			}
+			return true
+		}
+	}
+
+	return false
 }

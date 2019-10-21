@@ -21,12 +21,6 @@ func poll(pfds *pollfd, npfds uintptr, timeout uintptr) (int32, int32) {
 	return int32(r), int32(err)
 }
 
-//go:nosplit
-func fcntl(fd, cmd int32, arg uintptr) int32 {
-	r, _ := syscall3(&libc_fcntl, uintptr(fd), uintptr(cmd), arg)
-	return int32(r)
-}
-
 // pollfd represents the poll structure for AIX operating system.
 type pollfd struct {
 	fd      int32
@@ -38,7 +32,6 @@ const _POLLIN = 0x0001
 const _POLLOUT = 0x0002
 const _POLLHUP = 0x2000
 const _POLLERR = 0x4000
-const _O_NONBLOCK = 0x4
 
 var (
 	pfds           []pollfd
@@ -51,22 +44,13 @@ var (
 )
 
 func netpollinit() {
-	var p [2]int32
-
 	// Create the pipe we use to wakeup poll.
-	if err := pipe(&p[0]); err < 0 {
+	r, w, errno := nonblockingPipe()
+	if errno != 0 {
 		throw("netpollinit: failed to create pipe")
 	}
-	rdwake = p[0]
-	wrwake = p[1]
-
-	fl := uintptr(fcntl(rdwake, _F_GETFL, 0))
-	fcntl(rdwake, _F_SETFL, fl|_O_NONBLOCK)
-	fcntl(rdwake, _F_SETFD, _FD_CLOEXEC)
-
-	fl = uintptr(fcntl(wrwake, _F_GETFL, 0))
-	fcntl(wrwake, _F_SETFL, fl|_O_NONBLOCK)
-	fcntl(wrwake, _F_SETFD, _FD_CLOEXEC)
+	rdwake = r
+	wrwake = w
 
 	// Pre-allocate array of pollfd structures for poll.
 	pfds = make([]pollfd, 1, 128)
@@ -148,12 +132,27 @@ func netpollarm(pd *pollDesc, mode int) {
 	unlock(&mtxset)
 }
 
+// netpoll checks for ready network connections.
+// Returns list of goroutines that become runnable.
+// delay < 0: blocks indefinitely
+// delay == 0: does not block, just polls
+// delay > 0: block for up to that many nanoseconds
 //go:nowritebarrierrec
-func netpoll(block bool) gList {
-	timeout := ^uintptr(0)
-	if !block {
-		timeout = 0
+func netpoll(delay int64) gList {
+	var timeout uintptr
+	if delay < 0 {
+		timeout = ^uintptr(0)
+	} else if delay == 0 {
+		// TODO: call poll with timeout == 0
 		return gList{}
+	} else if delay < 1e6 {
+		timeout = 1
+	} else if delay < 1e15 {
+		timeout = uintptr(delay / 1e6)
+	} else {
+		// An arbitrary cap on how long to wait for a timer.
+		// 1e9 ms == ~11.5 days.
+		timeout = 1e9
 	}
 retry:
 	lock(&mtxpoll)
@@ -168,6 +167,11 @@ retry:
 			throw("poll failed")
 		}
 		unlock(&mtxset)
+		// If a timed sleep was interrupted, just return to
+		// recalculate how long we should sleep now.
+		if timeout > 0 {
+			return gList{}
+		}
 		goto retry
 	}
 	// Check if some descriptors need to be changed
@@ -203,8 +207,5 @@ retry:
 		}
 	}
 	unlock(&mtxset)
-	if block && toRun.empty() {
-		goto retry
-	}
 	return toRun
 }

@@ -84,16 +84,18 @@ var pkgDeps = map[string][]string{
 	},
 
 	// L2 adds Unicode and strings processing.
-	"bufio":   {"L0", "unicode/utf8", "bytes"},
-	"bytes":   {"L0", "unicode", "unicode/utf8"},
-	"path":    {"L0", "unicode/utf8", "strings"},
-	"strings": {"L0", "unicode", "unicode/utf8"},
-	"unicode": {},
+	"bufio":      {"L0", "unicode/utf8", "bytes"},
+	"bytes":      {"L0", "unicode", "unicode/utf8"},
+	"bytes/hash": {"L0"},
+	"path":       {"L0", "unicode/utf8", "strings"},
+	"strings":    {"L0", "unicode", "unicode/utf8"},
+	"unicode":    {},
 
 	"L2": {
 		"L1",
 		"bufio",
 		"bytes",
+		"bytes/hash",
 		"path",
 		"strings",
 		"unicode",
@@ -166,6 +168,7 @@ var pkgDeps = map[string][]string{
 		"syscall/js",
 	},
 
+	"internal/cfg":     {"L0"},
 	"internal/poll":    {"L0", "internal/oserror", "internal/race", "syscall", "time", "unicode/utf16", "unicode/utf8", "internal/syscall/windows"},
 	"internal/testlog": {"L0"},
 	"os":               {"L1", "os", "syscall", "time", "internal/oserror", "internal/poll", "internal/syscall/windows", "internal/syscall/unix", "internal/testlog"},
@@ -199,7 +202,7 @@ var pkgDeps = map[string][]string{
 	"testing":               {"L2", "flag", "fmt", "internal/race", "os", "runtime/debug", "runtime/pprof", "runtime/trace", "time"},
 	"testing/iotest":        {"L2", "log"},
 	"testing/quick":         {"L2", "flag", "fmt", "reflect", "time"},
-	"internal/testenv":      {"L2", "OS", "flag", "testing", "syscall"},
+	"internal/testenv":      {"L2", "OS", "flag", "testing", "syscall", "internal/cfg"},
 	"internal/lazyregexp":   {"L2", "OS", "regexp"},
 	"internal/lazytemplate": {"L2", "OS", "text/template"},
 
@@ -249,7 +252,7 @@ var pkgDeps = map[string][]string{
 	"compress/gzip":                  {"L4", "compress/flate"},
 	"compress/lzw":                   {"L4"},
 	"compress/zlib":                  {"L4", "compress/flate"},
-	"context":                        {"errors", "internal/oserror", "internal/reflectlite", "sync", "time"},
+	"context":                        {"errors", "internal/reflectlite", "sync", "sync/atomic", "time"},
 	"database/sql":                   {"L4", "container/list", "context", "database/sql/driver", "database/sql/internal"},
 	"database/sql/driver":            {"L4", "context", "time", "database/sql/internal"},
 	"debug/dwarf":                    {"L4"},
@@ -511,7 +514,7 @@ func listStdPkgs(goroot string) ([]string, error) {
 
 func TestDependencies(t *testing.T) {
 	iOS := runtime.GOOS == "darwin" && (runtime.GOARCH == "arm" || runtime.GOARCH == "arm64")
-	if runtime.GOOS == "nacl" || iOS {
+	if iOS {
 		// Tests run in a limited file system and we do not
 		// provide access to every source file.
 		t.Skipf("skipping on %s/%s, missing full GOROOT", runtime.GOOS, runtime.GOARCH)
