@@ -13,9 +13,7 @@ cp $WORK/extraneous.txt $GOPATH/pkg/mod/rsc.io/quote@v1.5.2/extraneous_file.go
 
 # However, files within those directories should still be read-only to avoid
 # accidental mutations.
-# TODO: Today, this does not seem to be effective on Windows.
-# (https://golang.org/issue/35033)
-[!windows] [!root] ! cp $WORK/extraneous.txt $GOPATH/pkg/mod/rsc.io/quote@v1.5.2/go.mod
+[!root] ! cp $WORK/extraneous.txt $GOPATH/pkg/mod/rsc.io/quote@v1.5.2/go.mod
 
 # If all 'go' commands ran with the flag, the system's 'rm' binary
 # should be able to remove the module cache if the '-rf' flags are set.
@@ -27,10 +25,23 @@ cp $WORK/extraneous.txt $GOPATH/pkg/mod/rsc.io/quote@v1.5.2/extraneous_file.go
 
 # The directories in the module cache should by default be unwritable,
 # so that tests and tools will not accidentally add extraneous files to them.
+# Windows does not respect FILE_ATTRIBUTE_READONLY on directories, according
+# to MSDN, so there we disable testing whether the directory itself is
+# unwritable.
 go get -d rsc.io/quote@latest
-[!windows] [!root] ! cp $WORK/extraneous.txt $GOPATH/pkg/mod/rsc.io/quote@v1.5.2/go.mod
+[!root] ! cp $WORK/extraneous.txt $GOPATH/pkg/mod/rsc.io/quote@v1.5.2/go.mod
 [!windows] [!root] ! cp $WORK/extraneous.txt $GOPATH/pkg/mod/rsc.io/quote@v1.5.2/extraneous_file.go
 ! exists $GOPATH/pkg/mod/rsc.io/quote@v1.5.2/extraneous_file.go
+
+
+# Repeat part of the test with 'go mod download' instead of 'go get' to verify
+# -modcacherw is supported on 'go mod' subcommands.
+go clean -modcache
+go mod download -modcacherw rsc.io/quote
+cp $WORK/extraneous.txt $GOPATH/pkg/mod/rsc.io/quote@v1.5.2/extraneous_file.go
+! go mod verify
+[!root] ! cp $WORK/extraneous.txt $GOPATH/pkg/mod/rsc.io/quote@v1.5.2/go.mod
+
 
 -- $WORK/extraneous.txt --
 module oops

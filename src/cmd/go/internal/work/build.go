@@ -105,6 +105,13 @@ and test commands:
 	-modcacherw
 		leave newly-created directories in the module cache read-write
 		instead of making them read-only.
+	-modfile file
+		in module aware mode, read (and possibly write) an alternate go.mod
+		file instead of the one in the module root directory. A file named
+		"go.mod" must still be present in order to determine the module root
+		directory, but it is not accessed. When -modfile is specified, an
+		alternate go.sum file is also used: its path is derived from the
+		-modfile flag by trimming the ".mod" extension and appending ".sum".
 	-pkgdir dir
 		install and load all packages from dir instead of the usual locations.
 		For example, when building with a non-standard configuration,
@@ -224,9 +231,10 @@ type BuildFlagMask int
 const (
 	DefaultBuildFlags BuildFlagMask = 0
 	OmitModFlag       BuildFlagMask = 1 << iota
+	OmitModCommonFlags
 )
 
-// addBuildFlags adds the flags common to the build, clean, get,
+// AddBuildFlags adds the flags common to the build, clean, get,
 // install, list, run, and test commands.
 func AddBuildFlags(cmd *base.Command, mask BuildFlagMask) {
 	cmd.Flag.BoolVar(&cfg.BuildA, "a", false, "")
@@ -243,10 +251,12 @@ func AddBuildFlags(cmd *base.Command, mask BuildFlagMask) {
 	if mask&OmitModFlag == 0 {
 		cmd.Flag.StringVar(&cfg.BuildMod, "mod", "", "")
 	}
+	if mask&OmitModCommonFlags == 0 {
+		AddModCommonFlags(cmd)
+	}
 	cmd.Flag.StringVar(&cfg.BuildContext.InstallSuffix, "installsuffix", "", "")
 	cmd.Flag.Var(&load.BuildLdflags, "ldflags", "")
 	cmd.Flag.BoolVar(&cfg.BuildLinkshared, "linkshared", false, "")
-	cmd.Flag.BoolVar(&cfg.BuildModcacheRW, "modcacherw", false, "")
 	cmd.Flag.StringVar(&cfg.BuildPkgdir, "pkgdir", "", "")
 	cmd.Flag.BoolVar(&cfg.BuildRace, "race", false, "")
 	cmd.Flag.BoolVar(&cfg.BuildMSan, "msan", false, "")
@@ -257,6 +267,13 @@ func AddBuildFlags(cmd *base.Command, mask BuildFlagMask) {
 
 	// Undocumented, unstable debugging flags.
 	cmd.Flag.StringVar(&cfg.DebugActiongraph, "debug-actiongraph", "", "")
+}
+
+// AddModCommonFlags adds the module-related flags common to build commands
+// and 'go mod' subcommands.
+func AddModCommonFlags(cmd *base.Command) {
+	cmd.Flag.BoolVar(&cfg.ModCacheRW, "modcacherw", false, "")
+	cmd.Flag.StringVar(&cfg.ModFile, "modfile", "", "")
 }
 
 // tagsFlag is the implementation of the -tags flag.
