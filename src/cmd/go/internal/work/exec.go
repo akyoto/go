@@ -206,8 +206,12 @@ func (b *Builder) buildActionID(a *Action) cache.ActionID {
 	// The compiler hides the exact value of $GOROOT
 	// when building things in GOROOT.
 	// Assume b.WorkDir is being trimmed properly.
+	// When -trimpath is used with a package built from the module cache,
+	// use the module path and version instead of the directory.
 	if !p.Goroot && !cfg.BuildTrimpath && !strings.HasPrefix(p.Dir, b.WorkDir) {
 		fmt.Fprintf(h, "dir %s\n", p.Dir)
+	} else if cfg.BuildTrimpath && p.Module != nil {
+		fmt.Fprintf(h, "module %s@%s\n", p.Module.Path, p.Module.Version)
 	}
 	fmt.Fprintf(h, "goos %s goarch %s\n", cfg.Goos, cfg.Goarch)
 	fmt.Fprintf(h, "import %q\n", p.ImportPath)
@@ -395,7 +399,7 @@ func (b *Builder) build(a *Action) (err error) {
 		bit(needCompiledGoFiles, b.NeedCompiledGoFiles)
 
 	if !p.BinaryOnly {
-		if b.useCache(a, p, b.buildActionID(a), p.Target) {
+		if b.useCache(a, b.buildActionID(a), p.Target) {
 			// We found the main output in the cache.
 			// If we don't need any other outputs, we can stop.
 			// Otherwise, we need to write files to a.Objdir (needVet, needCgoHdr).
@@ -1171,7 +1175,7 @@ func (b *Builder) printLinkerConfig(h io.Writer, p *load.Package) {
 // link is the action for linking a single command.
 // Note that any new influence on this logic must be reported in b.linkActionID above as well.
 func (b *Builder) link(a *Action) (err error) {
-	if b.useCache(a, a.Package, b.linkActionID(a), a.Package.Target) || b.IsCmdList {
+	if b.useCache(a, b.linkActionID(a), a.Package.Target) || b.IsCmdList {
 		return nil
 	}
 	defer b.flushOutput(a)
@@ -1404,7 +1408,7 @@ func (b *Builder) linkSharedActionID(a *Action) cache.ActionID {
 }
 
 func (b *Builder) linkShared(a *Action) (err error) {
-	if b.useCache(a, nil, b.linkSharedActionID(a), a.Target) || b.IsCmdList {
+	if b.useCache(a, b.linkSharedActionID(a), a.Target) || b.IsCmdList {
 		return nil
 	}
 	defer b.flushOutput(a)
@@ -1610,12 +1614,12 @@ func (b *Builder) copyFile(dst, src string, perm os.FileMode, force bool) error 
 
 	// Be careful about removing/overwriting dst.
 	// Do not remove/overwrite if dst exists and is a directory
-	// or a non-object file.
+	// or a non-empty non-object file.
 	if fi, err := os.Stat(dst); err == nil {
 		if fi.IsDir() {
 			return fmt.Errorf("build output %q already exists and is a directory", dst)
 		}
-		if !force && fi.Mode().IsRegular() && !isObject(dst) {
+		if !force && fi.Mode().IsRegular() && fi.Size() != 0 && !isObject(dst) {
 			return fmt.Errorf("build output %q already exists and is not an object file", dst)
 		}
 	}

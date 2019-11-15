@@ -292,6 +292,17 @@ Script:
 					}).(bool)
 					break
 				}
+				if strings.HasPrefix(cond.tag, "GODEBUG:") {
+					value := strings.TrimPrefix(cond.tag, "GODEBUG:")
+					parts := strings.Split(os.Getenv("GODEBUG"), ",")
+					for _, p := range parts {
+						if strings.TrimSpace(p) == value {
+							ok = true
+							break
+						}
+					}
+					break
+				}
 				if !imports.KnownArch[cond.tag] && !imports.KnownOS[cond.tag] && cond.tag != "gc" && cond.tag != "gccgo" {
 					ts.fatalf("unknown condition %q", cond.tag)
 				}
@@ -431,7 +442,11 @@ func (ts *testScript) cmdChmod(neg bool, args []string) {
 	if err != nil || perm&uint64(os.ModePerm) != perm {
 		ts.fatalf("invalid mode: %s", args[0])
 	}
-	for _, path := range args[1:] {
+	for _, arg := range args[1:] {
+		path := arg
+		if !filepath.IsAbs(path) {
+			path = filepath.Join(ts.cd, arg)
+		}
 		err := os.Chmod(path, os.FileMode(perm))
 		ts.check(err)
 	}

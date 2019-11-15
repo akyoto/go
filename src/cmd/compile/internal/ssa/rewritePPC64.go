@@ -71,6 +71,8 @@ func rewriteValuePPC64(v *Value) bool {
 		return rewriteValuePPC64_OpAtomicStore32_0(v)
 	case OpAtomicStore64:
 		return rewriteValuePPC64_OpAtomicStore64_0(v)
+	case OpAtomicStore8:
+		return rewriteValuePPC64_OpAtomicStore8_0(v)
 	case OpAtomicStoreRel32:
 		return rewriteValuePPC64_OpAtomicStoreRel32_0(v)
 	case OpAvg64u:
@@ -179,10 +181,10 @@ func rewriteValuePPC64(v *Value) bool {
 		return rewriteValuePPC64_OpEqB_0(v)
 	case OpEqPtr:
 		return rewriteValuePPC64_OpEqPtr_0(v)
+	case OpFMA:
+		return rewriteValuePPC64_OpFMA_0(v)
 	case OpFloor:
 		return rewriteValuePPC64_OpFloor_0(v)
-	case OpFma:
-		return rewriteValuePPC64_OpFma_0(v)
 	case OpGeq16:
 		return rewriteValuePPC64_OpGeq16_0(v)
 	case OpGeq16U:
@@ -1132,6 +1134,21 @@ func rewriteValuePPC64_OpAtomicStore64_0(v *Value) bool {
 		return true
 	}
 }
+func rewriteValuePPC64_OpAtomicStore8_0(v *Value) bool {
+	// match: (AtomicStore8 ptr val mem)
+	// result: (LoweredAtomicStore8 [1] ptr val mem)
+	for {
+		mem := v.Args[2]
+		ptr := v.Args[0]
+		val := v.Args[1]
+		v.reset(OpPPC64LoweredAtomicStore8)
+		v.AuxInt = 1
+		v.AddArg(ptr)
+		v.AddArg(val)
+		v.AddArg(mem)
+		return true
+	}
+}
 func rewriteValuePPC64_OpAtomicStoreRel32_0(v *Value) bool {
 	// match: (AtomicStoreRel32 ptr val mem)
 	// result: (LoweredAtomicStore32 [0] ptr val mem)
@@ -1980,18 +1997,8 @@ func rewriteValuePPC64_OpEqPtr_0(v *Value) bool {
 		return true
 	}
 }
-func rewriteValuePPC64_OpFloor_0(v *Value) bool {
-	// match: (Floor x)
-	// result: (FFLOOR x)
-	for {
-		x := v.Args[0]
-		v.reset(OpPPC64FFLOOR)
-		v.AddArg(x)
-		return true
-	}
-}
-func rewriteValuePPC64_OpFma_0(v *Value) bool {
-	// match: (Fma x y z)
+func rewriteValuePPC64_OpFMA_0(v *Value) bool {
+	// match: (FMA x y z)
 	// result: (FMADD x y z)
 	for {
 		z := v.Args[2]
@@ -2001,6 +2008,16 @@ func rewriteValuePPC64_OpFma_0(v *Value) bool {
 		v.AddArg(x)
 		v.AddArg(y)
 		v.AddArg(z)
+		return true
+	}
+}
+func rewriteValuePPC64_OpFloor_0(v *Value) bool {
+	// match: (Floor x)
+	// result: (FFLOOR x)
+	for {
+		x := v.Args[0]
+		v.reset(OpPPC64FFLOOR)
+		v.AddArg(x)
 		return true
 	}
 }

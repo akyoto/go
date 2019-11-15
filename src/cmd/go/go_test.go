@@ -917,6 +917,7 @@ func TestNewReleaseRebuildsStalePackagesInGOPATH(t *testing.T) {
 		"src/runtime",
 		"src/internal/bytealg",
 		"src/internal/cpu",
+		"src/math/bits",
 		"src/unsafe",
 		filepath.Join("pkg", runtime.GOOS+"_"+runtime.GOARCH),
 		filepath.Join("pkg/tool", runtime.GOOS+"_"+runtime.GOARCH),
@@ -1433,17 +1434,6 @@ func TestRelativeImportsInCommandLinePackage(t *testing.T) {
 	files, err := filepath.Glob("./testdata/testimport/*.go")
 	tg.must(err)
 	tg.run(append([]string{"test"}, files...)...)
-}
-
-func TestNonCanonicalImportPaths(t *testing.T) {
-	tg := testgo(t)
-	defer tg.cleanup()
-	tg.parallel()
-	tg.setenv("GOPATH", filepath.Join(tg.pwd(), "testdata"))
-	tg.runFail("build", "canonical/d")
-	tg.grepStderr("package canonical/d", "did not report canonical/d")
-	tg.grepStderr("imports canonical/b", "did not report canonical/b")
-	tg.grepStderr("imports canonical/a/: non-canonical", "did not report canonical/a/")
 }
 
 func TestVersionControlErrorMessageIncludesCorrectDirectory(t *testing.T) {
@@ -4687,23 +4677,19 @@ func copyFile(src, dst string, perm os.FileMode) error {
 	return err2
 }
 
+// TestExecutableGOROOT verifies that the cmd/go binary itself uses
+// os.Executable (when available) to locate GOROOT.
 func TestExecutableGOROOT(t *testing.T) {
 	skipIfGccgo(t, "gccgo has no GOROOT")
-	if runtime.GOOS == "openbsd" {
-		t.Skipf("test case does not work on %s, missing os.Executable", runtime.GOOS)
-	}
 
-	// Env with no GOROOT.
-	var env []string
-	for _, e := range os.Environ() {
-		if !strings.HasPrefix(e, "GOROOT=") {
-			env = append(env, e)
-		}
-	}
+	// Note: Must not call tg methods inside subtests: tg is attached to outer t.
+	tg := testgo(t)
+	tg.unsetenv("GOROOT")
+	defer tg.cleanup()
 
 	check := func(t *testing.T, exe, want string) {
 		cmd := exec.Command(exe, "env", "GOROOT")
-		cmd.Env = env
+		cmd.Env = tg.env
 		out, err := cmd.CombinedOutput()
 		if err != nil {
 			t.Fatalf("%s env GOROOT: %v, %s", exe, err, out)
@@ -4722,10 +4708,6 @@ func TestExecutableGOROOT(t *testing.T) {
 			t.Logf("go env GOROOT: %s", goroot)
 		}
 	}
-
-	// Note: Must not call tg methods inside subtests: tg is attached to outer t.
-	tg := testgo(t)
-	defer tg.cleanup()
 
 	tg.makeTempdir()
 	tg.tempDir("new/bin")
@@ -4773,8 +4755,9 @@ func TestExecutableGOROOT(t *testing.T) {
 		}
 
 		cmd := exec.Command(newGoTool, "run", "testdata/print_goroot.go")
-		cmd.Env = env
-		out, err := cmd.CombinedOutput()
+		cmd.Env = tg.env
+		cmd.Stderr = os.Stderr
+		out, err := cmd.Output()
 		if err != nil {
 			t.Fatalf("%s run testdata/print_goroot.go: %v, %s", newGoTool, err, out)
 		}
@@ -5191,52 +5174,6 @@ func TestUpxCompression(t *testing.T) {
 	}
 }
 
-// Test that Go binaries can be run under QEMU in user-emulation mode
-// (See issue #13024).
-func TestQEMUUserMode(t *testing.T) {
-	if testing.Short() && testenv.Builder() == "" {
-		t.Skipf("skipping in -short mode on non-builder")
-	}
-
-	testArchs := []struct {
-		g, qemu string
-	}{
-		{"arm", "arm"},
-		{"arm64", "aarch64"},
-	}
-
-	tg := testgo(t)
-	defer tg.cleanup()
-	tg.tempFile("main.go", `package main; import "fmt"; func main() { fmt.Print("hello qemu-user") }`)
-	tg.parallel()
-	src, obj := tg.path("main.go"), tg.path("main")
-
-	for _, arch := range testArchs {
-		arch := arch
-		t.Run(arch.g, func(t *testing.T) {
-			qemu := "qemu-" + arch.qemu
-			testenv.MustHaveExecPath(t, qemu)
-
-			out, err := exec.Command(qemu, "--version").CombinedOutput()
-			if err != nil {
-				t.Fatalf("%s --version failed: %v", qemu, err)
-			}
-
-			tg.setenv("GOARCH", arch.g)
-			tg.run("build", "-o", obj, src)
-
-			out, err = exec.Command(qemu, obj).CombinedOutput()
-			if err != nil {
-				t.Logf("%s output:\n%s\n", qemu, out)
-				t.Fatalf("%s failed with %v", qemu, err)
-			}
-			if want := "hello qemu-user"; string(out) != want {
-				t.Errorf("bad output from %s:\ngot %s; want %s", qemu, out, want)
-			}
-		})
-	}
-}
-
 func TestCacheListStale(t *testing.T) {
 	tooSlow(t)
 	if strings.Contains(os.Getenv("GODEBUG"), "gocacheverify") {
@@ -5275,38 +5212,6 @@ func TestCacheCoverage(t *testing.T) {
 	tg.setenv("GOCACHE", tg.path("c1"))
 	tg.run("test", "-cover", "-short", "strings")
 	tg.run("test", "-cover", "-short", "math", "strings")
-}
-
-func TestCacheVet(t *testing.T) {
-	skipIfGccgo(t, "gccgo has no standard packages")
-	tg := testgo(t)
-	defer tg.cleanup()
-	tg.parallel()
-
-	if strings.Contains(os.Getenv("GODEBUG"), "gocacheverify") {
-		t.Skip("GODEBUG gocacheverify")
-	}
-	if testing.Short() {
-		// In short mode, reuse cache.
-		// Test failures may be masked if the cache has just the right entries already
-		// (not a concern during all.bash, which runs in a clean cache).
-		if cfg.Getenv("GOCACHE") == "off" {
-			tooSlow(t)
-		}
-	} else {
-		tg.makeTempdir()
-		tg.setenv("GOCACHE", tg.path("cache"))
-	}
-
-	// Check that second vet reuses cgo-derived inputs.
-	// The first command could be build instead of vet,
-	// except that if the cache is empty and there's a net.a
-	// in GOROOT/pkg, the build will not bother to regenerate
-	// and cache the cgo outputs, whereas vet always will.
-	tg.run("vet", "os/user")
-	tg.run("vet", "-x", "os/user")
-	tg.grepStderrNot(`^(clang|gcc)`, "should not have run compiler")
-	tg.grepStderrNot(`[\\/]cgo `, "should not have run cgo")
 }
 
 func TestIssue22588(t *testing.T) {
@@ -5754,14 +5659,6 @@ func TestInstallDeps(t *testing.T) {
 
 	tg.run("install", "-i", "p2")
 	tg.mustExist(p1)
-}
-
-func TestFmtLoadErrors(t *testing.T) {
-	tg := testgo(t)
-	defer tg.cleanup()
-	tg.setenv("GOPATH", filepath.Join(tg.pwd(), "testdata"))
-	tg.runFail("fmt", "does-not-exist")
-	tg.run("fmt", "-n", "exclude")
 }
 
 func TestGoTestMinusN(t *testing.T) {

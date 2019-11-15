@@ -172,6 +172,20 @@ TEXT	runtime·raiseproc(SB),NOSPLIT|NOFRAME,$0
 	SWI	$0
 	RET
 
+TEXT ·getpid(SB),NOSPLIT,$0-4
+	MOVW	$SYS_getpid, R7
+	SWI	$0
+	MOVW	R0, ret+0(FP)
+	RET
+
+TEXT ·tgkill(SB),NOSPLIT,$0-12
+	MOVW	tgid+0(FP), R0
+	MOVW	tid+4(FP), R1
+	MOVW	sig+8(FP), R2
+	MOVW	$SYS_tgkill, R7
+	SWI	$0
+	RET
+
 TEXT runtime·mmap(SB),NOSPLIT,$0
 	MOVW	addr+0(FP), R0
 	MOVW	n+4(FP), R1
@@ -263,19 +277,30 @@ noswitch:
 	// during VDSO code we can find the g.
 	// If we don't have a signal stack, we won't receive signal,
 	// so don't bother saving g.
+	// When using cgo, we already saved g on TLS, also don't save
+	// g here.
+	// Also don't save g if we are already on the signal stack.
+	// We won't get a nested signal.
+	MOVB	runtime·iscgo(SB), R6
+	CMP	$0, R6
+	BNE	nosaveg
 	MOVW	m_gsignal(R5), R6          // g.m.gsignal
 	CMP	$0, R6
-	BEQ	3(PC)
+	BEQ	nosaveg
+	CMP	g, R6
+	BEQ	nosaveg
 	MOVW	(g_stack+stack_lo)(R6), R6 // g.m.gsignal.stack.lo
 	MOVW	g, (R6)
 
 	BL	(R11)
 
-	CMP	$0, R6   // R6 is unchanged by C code
-	BEQ	3(PC)
 	MOVW	$0, R1
-	MOVW	R1, (R6) // clear g slot
+	MOVW	R1, (R6) // clear g slot, R6 is unchanged by C code
 
+	JMP	finish
+
+nosaveg:
+	BL	(R11)
 	JMP	finish
 
 fallback:
@@ -330,19 +355,30 @@ noswitch:
 	// during VDSO code we can find the g.
 	// If we don't have a signal stack, we won't receive signal,
 	// so don't bother saving g.
+	// When using cgo, we already saved g on TLS, also don't save
+	// g here.
+	// Also don't save g if we are already on the signal stack.
+	// We won't get a nested signal.
+	MOVB	runtime·iscgo(SB), R6
+	CMP	$0, R6
+	BNE	nosaveg
 	MOVW	m_gsignal(R5), R6          // g.m.gsignal
 	CMP	$0, R6
-	BEQ	3(PC)
+	BEQ	nosaveg
+	CMP	g, R6
+	BEQ	nosaveg
 	MOVW	(g_stack+stack_lo)(R6), R6 // g.m.gsignal.stack.lo
 	MOVW	g, (R6)
 
 	BL	(R11)
 
-	CMP	$0, R6   // R6 is unchanged by C code
-	BEQ	3(PC)
 	MOVW	$0, R1
-	MOVW	R1, (R6) // clear g slot
+	MOVW	R1, (R6) // clear g slot, R6 is unchanged by C code
 
+	JMP	finish
+
+nosaveg:
+	BL	(R11)
 	JMP	finish
 
 fallback:
@@ -479,7 +515,11 @@ TEXT runtime·sigfwd(SB),NOSPLIT,$0-16
 	MOVW	R4, R13
 	RET
 
-TEXT runtime·sigtramp(SB),NOSPLIT,$12
+TEXT runtime·sigtramp(SB),NOSPLIT,$0
+	// Reserve space for callee-save registers and arguments.
+	MOVM.DB.W [R4-R11], (R13)
+	SUB	$16, R13
+
 	// this might be called in external code context,
 	// where g is not set.
 	// first save R0, because runtime·load_g will clobber it
@@ -492,6 +532,11 @@ TEXT runtime·sigtramp(SB),NOSPLIT,$12
 	MOVW	R2, 12(R13)
 	MOVW  	$runtime·sigtrampgo(SB), R11
 	BL	(R11)
+
+	// Restore callee-save registers.
+	ADD	$16, R13
+	MOVM.IA.W (R13), [R4-R11]
+
 	RET
 
 TEXT runtime·cgoSigtramp(SB),NOSPLIT,$0

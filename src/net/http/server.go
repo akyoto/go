@@ -3160,7 +3160,7 @@ func (srv *Server) onceSetNextProtoDefaults_Serve() {
 // configured otherwise. (by setting srv.TLSNextProto non-nil)
 // It must only be called via srv.nextProtoOnce (use srv.setupHTTP2_*).
 func (srv *Server) onceSetNextProtoDefaults() {
-	if strings.Contains(os.Getenv("GODEBUG"), "http2server=0") {
+	if omitBundledHTTP2 || strings.Contains(os.Getenv("GODEBUG"), "http2server=0") {
 		return
 	}
 	// Enable HTTP/2 by default if the user hasn't otherwise
@@ -3182,8 +3182,8 @@ func (srv *Server) onceSetNextProtoDefaults() {
 // After such a timeout, writes by h to its ResponseWriter will return
 // ErrHandlerTimeout.
 //
-// TimeoutHandler supports the Flusher and Pusher interfaces but does not
-// support the Hijacker interface.
+// TimeoutHandler supports the Pusher interface but does not support
+// the Hijacker or Flusher interfaces.
 func TimeoutHandler(h Handler, dt time.Duration, msg string) Handler {
 	return &timeoutHandler{
 		handler: h,

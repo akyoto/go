@@ -593,7 +593,7 @@ func loadImport(pre *preload, path, srcDir string, parent *Package, stk *ImportS
 		return setErrorPos(perr, importPos)
 	}
 	if mode&ResolveImport != 0 {
-		if perr := disallowVendor(srcDir, parent, parentPath, path, p, stk); perr != p {
+		if perr := disallowVendor(srcDir, path, p, stk); perr != p {
 			return setErrorPos(perr, importPos)
 		}
 	}
@@ -670,6 +670,11 @@ func loadPackageData(path, parentPath, parentDir, parentRoot string, parentIsStd
 	// we create from the full directory to the package.
 	// Otherwise it is the usual import path.
 	// For vendored imports, it is the expanded form.
+	//
+	// Note that when modules are enabled, local import paths are normally
+	// canonicalized by modload.ImportPaths before now. However, if there's an
+	// error resolving a local path, it will be returned untransformed
+	// so that 'go list -e' reports something useful.
 	importKey := importSpec{
 		path:        path,
 		parentPath:  parentPath,
@@ -1321,11 +1326,10 @@ func findInternal(path string) (index int, ok bool) {
 	return 0, false
 }
 
-// disallowVendor checks that srcDir (containing package importerPath, if non-empty)
-// is allowed to import p as path.
+// disallowVendor checks that srcDir is allowed to import p as path.
 // If the import is allowed, disallowVendor returns the original package p.
 // If not, it returns a new package containing just an appropriate error.
-func disallowVendor(srcDir string, importer *Package, importerPath, path string, p *Package, stk *ImportStack) *Package {
+func disallowVendor(srcDir string, path string, p *Package, stk *ImportStack) *Package {
 	// The stack includes p.ImportPath.
 	// If that's the only thing on the stack, we started
 	// with a name given on the command line, not an

@@ -121,18 +121,16 @@ func TestDisappearingDefer(t *testing.T) {
 }
 
 // This tests an extra recursive panic behavior that is only specified in the
-// code.  Suppose a first panic P1 happens and starts processing defer calls.  If
-// a second panic P2 happens while processing defer call D in frame F, then defer
+// code. Suppose a first panic P1 happens and starts processing defer calls. If a
+// second panic P2 happens while processing defer call D in frame F, then defer
 // call processing is restarted (with some potentially new defer calls created by
-// D or its callees).  If the defer processing reaches the started defer call D
+// D or its callees). If the defer processing reaches the started defer call D
 // again in the defer stack, then the original panic P1 is aborted and cannot
-// continue panic processing or be recovered.  If the panic P2 does a recover at
-// some point, it will naturally the original panic P1 from the stack, since the
-// original panic had to be in frame F or a descendant of F.
+// continue panic processing or be recovered. If the panic P2 does a recover at
+// some point, it will naturally remove the original panic P1 from the stack
+// (since the original panic had to be in frame F or a descendant of F).
 func TestAbortedPanic(t *testing.T) {
 	defer func() {
-		// The first panic should have been "aborted", so there is
-		// no other panic to recover
 		r := recover()
 		if r != nil {
 			t.Fatal(fmt.Sprintf("wanted nil recover, got %v", r))
@@ -181,12 +179,16 @@ type bigStruct struct {
 	x, y, z, w, p, q int64
 }
 
+type containsBigStruct struct {
+	element bigStruct
+}
+
 func mknonSSAable() nonSSAable {
 	globint1++
 	return nonSSAable{0, 0, 0, 0, 5}
 }
 
-var globint1, globint2 int
+var globint1, globint2, globint3 int
 
 //go:noinline
 func sideeffect(n int64) int64 {
@@ -194,12 +196,20 @@ func sideeffect(n int64) int64 {
 	return n
 }
 
+func sideeffect2(in containsBigStruct) containsBigStruct {
+	globint3++
+	return in
+}
+
 // Test that nonSSAable arguments to defer are handled correctly and only evaluated once.
 func TestNonSSAableArgs(t *testing.T) {
 	globint1 = 0
 	globint2 = 0
+	globint3 = 0
 	var save1 byte
 	var save2 int64
+	var save3 int64
+	var save4 int64
 
 	defer func() {
 		if globint1 != 1 {
@@ -214,12 +224,60 @@ func TestNonSSAableArgs(t *testing.T) {
 		if save2 != 2 {
 			t.Fatal(fmt.Sprintf("save2:  wanted: 2, got %v", save2))
 		}
+		if save3 != 4 {
+			t.Fatal(fmt.Sprintf("save3:  wanted: 4, got %v", save3))
+		}
+		if globint3 != 1 {
+			t.Fatal(fmt.Sprintf("globint3:  wanted: 1, got %v", globint3))
+		}
+		if save4 != 4 {
+			t.Fatal(fmt.Sprintf("save1:  wanted: 4, got %v", save4))
+		}
 	}()
 
+	// Test function returning a non-SSAable arg
 	defer func(n nonSSAable) {
 		save1 = n[4]
 	}(mknonSSAable())
+	// Test composite literal that is not SSAable
 	defer func(b bigStruct) {
 		save2 = b.y
 	}(bigStruct{1, 2, 3, 4, 5, sideeffect(6)})
+
+	// Test struct field reference that is non-SSAable
+	foo := containsBigStruct{}
+	foo.element.z = 4
+	defer func(element bigStruct) {
+		save3 = element.z
+	}(foo.element)
+	defer func(element bigStruct) {
+		save4 = element.z
+	}(sideeffect2(foo).element)
+}
+
+//go:noinline
+func doPanic() {
+	panic("Test panic")
+}
+
+func TestDeferForFuncWithNoExit(t *testing.T) {
+	cond := 1
+	defer func() {
+		if cond != 2 {
+			t.Fatal(fmt.Sprintf("cond: wanted 2, got %v", cond))
+		}
+		if recover() != "Test panic" {
+			t.Fatal("Didn't find expected panic")
+		}
+	}()
+	x := 0
+	// Force a stack copy, to make sure that the &cond pointer passed to defer
+	// function is properly updated.
+	growStackIter(&x, 1000)
+	cond = 2
+	doPanic()
+
+	// This function has no exit/return, since it ends with an infinite loop
+	for {
+	}
 }

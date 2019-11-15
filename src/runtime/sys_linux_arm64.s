@@ -175,6 +175,20 @@ TEXT runtime·raiseproc(SB),NOSPLIT|NOFRAME,$0
 	SVC
 	RET
 
+TEXT ·getpid(SB),NOSPLIT|NOFRAME,$0-8
+	MOVD	$SYS_getpid, R8
+	SVC
+	MOVD	R0, ret+0(FP)
+	RET
+
+TEXT ·tgkill(SB),NOSPLIT,$0-24
+	MOVD	tgid+0(FP), R0
+	MOVD	tid+8(FP), R1
+	MOVD	sig+16(FP), R2
+	MOVD	$SYS_tgkill, R8
+	SVC
+	RET
+
 TEXT runtime·setitimer(SB),NOSPLIT|NOFRAME,$0-24
 	MOVW	mode+0(FP), R0
 	MOVD	new+8(FP), R1
@@ -223,16 +237,27 @@ noswitch:
 	// during VDSO code we can find the g.
 	// If we don't have a signal stack, we won't receive signal,
 	// so don't bother saving g.
+	// When using cgo, we already saved g on TLS, also don't save
+	// g here.
+	// Also don't save g if we are already on the signal stack.
+	// We won't get a nested signal.
+	MOVBU	runtime·iscgo(SB), R22
+	CBNZ	R22, nosaveg
 	MOVD	m_gsignal(R21), R22          // g.m.gsignal
-	CBZ	R22, 3(PC)
+	CBZ	R22, nosaveg
+	CMP	g, R22
+	BEQ	nosaveg
 	MOVD	(g_stack+stack_lo)(R22), R22 // g.m.gsignal.stack.lo
 	MOVD	g, (R22)
 
 	BL	(R2)
 
-	CBZ	R22, 2(PC) // R22 is unchanged by C code
-	MOVD	ZR, (R22)  // clear g slot
+	MOVD	ZR, (R22)  // clear g slot, R22 is unchanged by C code
 
+	B	finish
+
+nosaveg:
+	BL	(R2)
 	B	finish
 
 fallback:
@@ -280,16 +305,27 @@ noswitch:
 	// during VDSO code we can find the g.
 	// If we don't have a signal stack, we won't receive signal,
 	// so don't bother saving g.
+	// When using cgo, we already saved g on TLS, also don't save
+	// g here.
+	// Also don't save g if we are already on the signal stack.
+	// We won't get a nested signal.
+	MOVBU	runtime·iscgo(SB), R22
+	CBNZ	R22, nosaveg
 	MOVD	m_gsignal(R21), R22          // g.m.gsignal
-	CBZ	R22, 3(PC)
+	CBZ	R22, nosaveg
+	CMP	g, R22
+	BEQ	nosaveg
 	MOVD	(g_stack+stack_lo)(R22), R22 // g.m.gsignal.stack.lo
 	MOVD	g, (R22)
 
 	BL	(R2)
 
-	CBZ	R22, 2(PC) // R22 is unchanged by C code
-	MOVD	ZR, (R22)  // clear g slot
+	MOVD	ZR, (R22)  // clear g slot, R22 is unchanged by C code
 
+	B	finish
+
+nosaveg:
+	BL	(R2)
 	B	finish
 
 fallback:

@@ -84,18 +84,16 @@ var pkgDeps = map[string][]string{
 	},
 
 	// L2 adds Unicode and strings processing.
-	"bufio":      {"L0", "unicode/utf8", "bytes"},
-	"bytes":      {"L0", "unicode", "unicode/utf8"},
-	"bytes/hash": {"L0"},
-	"path":       {"L0", "unicode/utf8", "strings"},
-	"strings":    {"L0", "unicode", "unicode/utf8"},
-	"unicode":    {},
+	"bufio":   {"L0", "unicode/utf8", "bytes"},
+	"bytes":   {"L0", "unicode", "unicode/utf8"},
+	"path":    {"L0", "unicode/utf8", "strings"},
+	"strings": {"L0", "unicode", "unicode/utf8"},
+	"unicode": {},
 
 	"L2": {
 		"L1",
 		"bufio",
 		"bytes",
-		"bytes/hash",
 		"path",
 		"strings",
 		"unicode",
@@ -116,6 +114,7 @@ var pkgDeps = map[string][]string{
 	"hash/crc32":             {"L2", "hash"},
 	"hash/crc64":             {"L2", "hash"},
 	"hash/fnv":               {"L2", "hash"},
+	"hash/maphash":           {"L2", "hash"},
 	"image":                  {"L2", "image/color"}, // interfaces
 	"image/color":            {"L2"},                // interfaces
 	"image/color/palette":    {"L2", "image/color"},

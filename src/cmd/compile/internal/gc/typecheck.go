@@ -608,7 +608,7 @@ func typecheck1(n *Node, top int) (res *Node) {
 				n.Type = nil
 				return n
 			}
-			if t.IsSigned() && !langSupported(1, 13) {
+			if t.IsSigned() && !langSupported(1, 13, curpkg()) {
 				yyerrorv("go1.13", "invalid operation: %v (signed shift count type %v)", n, r.Type)
 				n.Type = nil
 				return n
@@ -2782,7 +2782,7 @@ func typecheckcomplit(n *Node) (res *Node) {
 		}
 		elemType := n.Right.Right.Type
 
-		length := typecheckarraylit(elemType, -1, n.List.Slice())
+		length := typecheckarraylit(elemType, -1, n.List.Slice(), "array literal")
 
 		n.Op = OARRAYLIT
 		n.Type = types.NewArray(elemType, length)
@@ -2804,12 +2804,12 @@ func typecheckcomplit(n *Node) (res *Node) {
 		n.Type = nil
 
 	case TARRAY:
-		typecheckarraylit(t.Elem(), t.NumElem(), n.List.Slice())
+		typecheckarraylit(t.Elem(), t.NumElem(), n.List.Slice(), "array literal")
 		n.Op = OARRAYLIT
 		n.Right = nil
 
 	case TSLICE:
-		length := typecheckarraylit(t.Elem(), -1, n.List.Slice())
+		length := typecheckarraylit(t.Elem(), -1, n.List.Slice(), "slice literal")
 		n.Op = OSLICELIT
 		n.Right = nodintconst(length)
 
@@ -2960,7 +2960,8 @@ func typecheckcomplit(n *Node) (res *Node) {
 	return n
 }
 
-func typecheckarraylit(elemType *types.Type, bound int64, elts []*Node) int64 {
+// typecheckarraylit type-checks a sequence of slice/array literal elements.
+func typecheckarraylit(elemType *types.Type, bound int64, elts []*Node, ctx string) int64 {
 	// If there are key/value pairs, create a map to keep seen
 	// keys so we can check for duplicate indices.
 	var indices map[int64]bool
@@ -2995,12 +2996,12 @@ func typecheckarraylit(elemType *types.Type, bound int64, elts []*Node) int64 {
 		r := *vp
 		r = pushtype(r, elemType)
 		r = typecheck(r, ctxExpr)
-		*vp = assignconv(r, elemType, "array or slice literal")
+		*vp = assignconv(r, elemType, ctx)
 
 		if key >= 0 {
 			if indices != nil {
 				if indices[key] {
-					yyerror("duplicate index in array literal: %d", key)
+					yyerror("duplicate index in %s: %d", ctx, key)
 				} else {
 					indices[key] = true
 				}
@@ -3949,4 +3950,21 @@ func getIotaValue() int64 {
 	}
 
 	return -1
+}
+
+// curpkg returns the current package, based on Curfn.
+func curpkg() *types.Pkg {
+	fn := Curfn
+	if fn == nil {
+		// Initialization expressions for package-scope variables.
+		return localpkg
+	}
+
+	// TODO(mdempsky): Standardize on either ODCLFUNC or ONAME for
+	// Curfn, rather than mixing them.
+	if fn.Op == ODCLFUNC {
+		fn = fn.Func.Nname
+	}
+
+	return fnpkg(fn)
 }

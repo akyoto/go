@@ -18,11 +18,12 @@ import (
 	"cmd/go/internal/cfg"
 	"cmd/go/internal/load"
 	"cmd/go/internal/modfetch"
-	"cmd/go/internal/module"
 	"cmd/go/internal/par"
 	"cmd/go/internal/search"
-	"cmd/go/internal/semver"
 	"cmd/go/internal/str"
+
+	"golang.org/x/mod/module"
+	"golang.org/x/mod/semver"
 )
 
 type ImportMissingError struct {
@@ -234,6 +235,17 @@ func Import(path string) (m module.Version, dir string, err error) {
 			_, ok := dirInModule(path, m.Path, root, isLocal)
 			if ok {
 				return m, "", &ImportMissingError{Path: path, Module: m}
+			}
+		}
+		if len(mods) > 0 && module.CheckPath(path) != nil {
+			// The package path is not valid to fetch remotely,
+			// so it can only exist if in a replaced module,
+			// and we know from the above loop that it is not.
+			return module.Version{}, "", &PackageNotInModuleError{
+				Mod:         mods[0],
+				Query:       "latest",
+				Pattern:     path,
+				Replacement: Replacement(mods[0]),
 			}
 		}
 	}
